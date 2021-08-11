@@ -7,20 +7,17 @@ import numpy as np
 from sklearn.decomposition import PCA
 from sklearn.random_projection import SparseRandomProjection
 
-import keras
-from keras.layers import Input, Dense, Dropout, Activation, Conv2D, MaxPooling2D, UpSampling2D
-from keras.models import Model, Sequential
-from keras.utils import np_utils
-from keras.models import load_model
-from keras.callbacks import ReduceLROnPlateau, CSVLogger, EarlyStopping
+import tensorflow as tf
 
-from keras import optimizers
+from tensorflow.keras.layers import Input, Dense, Dropout, Activation, Conv2D, MaxPooling2D, UpSampling2D
+from tensorflow.keras.models import Model, Sequential
+from tensorflow.keras.models import load_model
+from tensorflow.keras.callbacks import ReduceLROnPlateau, CSVLogger, EarlyStopping
+
+from tensorflow.keras import optimizers
 
 from shared_utils import *
 import os
-
-import keras_resnet
-import keras_resnet.models
 
 # -------------------------------------------------
 # SHIFT REDUCTOR
@@ -38,6 +35,8 @@ class ShiftReductor:
         self.orig_dims = orig_dims
         self.datset = datset
         self.mod_path = None
+        if self.datset == 'mnist_gradxinput' or self.datset == 'mnist_bg':
+            self.datset = 'mnist'
 
         # We can set the number of dimensions automatically by computing PCA's variance retention rate.
         if dr_amount is None:
@@ -58,6 +57,7 @@ class ShiftReductor:
             return self.sparse_random_projection()
         elif self.dr_tech == DimensionalityReduction.UAE:
             self.mod_path = './saved_models/' + self.datset + '_untr_autoencoder_model.h5'
+            print(self.mod_path)
             if os.path.exists(self.mod_path):
                 return load_model(self.mod_path)
             return self.autoencoder(train=False)
@@ -69,12 +69,12 @@ class ShiftReductor:
         elif self.dr_tech == DimensionalityReduction.BBSDs:
             self.mod_path = './saved_models/' + self.datset + '_standard_class_model.h5'
             if os.path.exists(self.mod_path):
-                return load_model(self.mod_path, custom_objects=keras_resnet.custom_objects)
+                return load_model(self.mod_path)
             return self.neural_network_classifier(train=True)
         elif self.dr_tech == DimensionalityReduction.BBSDh:
             self.mod_path = './saved_models/' + self.datset + '_standard_class_model.h5'
             if os.path.exists(self.mod_path):
-                return load_model(self.mod_path, custom_objects=keras_resnet.custom_objects)
+                return load_model(self.mod_path)
             return self.neural_network_classifier(train=True)
 
     # Given a model to reduce dimensionality and some data, we have to perform different operations depending on
@@ -111,6 +111,7 @@ class ShiftReductor:
         X = self.X.reshape(len(self.X), self.orig_dims[0], self.orig_dims[1], self.orig_dims[2])
 
         input_img = Input(shape=self.orig_dims)
+        print(self.datset)
 
         # Define various architectures.
         if self.datset == 'mnist' or self.datset == 'fashion_mnist':
@@ -190,11 +191,19 @@ class ShiftReductor:
         early_stopper = EarlyStopping(min_delta=0.001, patience=10)
         batch_size = 128
         nb_classes = len(np.unique(self.y))
-        epochs = 200
-        y_loc = np_utils.to_categorical(self.y, nb_classes)
-        y_val_loc = np_utils.to_categorical(self.y_val, nb_classes)
-    
-        model = keras_resnet.models.ResNet18(keras.layers.Input(self.orig_dims), classes=nb_classes)
+        epochs = 0.1
+        y_loc = tf.keras.utils.to_categorical(self.y, nb_classes)
+        y_val_loc = tf.keras.utils.to_categorical(self.y_val, nb_classes)
+
+        input = tf.keras.layers.Input(shape=(28, 28, 1))
+        resize = tf.keras.layers.Lambda(lambda image: tf.image.resize_images(
+                image,
+                (32, 32)
+            ))
+        resized = resize(input)
+        vgg = tf.keras.applications.ResNet50(weights=None, classes=nb_classes, input_shape=(32,32,1), include_top=True)
+        x = vgg(resized)
+        model = tf.keras.Model(inputs=input, outputs=x)
         model.compile(loss='categorical_crossentropy',
                       optimizer=optimizers.SGD(lr=0.001, decay=1e-6, momentum=0.9),
                       metrics=['accuracy'])

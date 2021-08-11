@@ -77,7 +77,7 @@ colors = ['#2196f3', '#f44336', '#9c27b0', '#64dd17', '#009688', '#ff9800', '#79
 
 # Define results path.
 test_type = sys.argv[1]
-path = './paper_results/'
+path = 'paper_results_orig/'
 path += test_type + '/'
 
 # Define DR methods.

@@ -2,22 +2,81 @@
 # IMPORTS
 # -------------------------------------------------
 
+import tensorflow as tf
 import numpy as np
 import scipy.io
 from math import ceil
+import cv2
 
-from keras.datasets import mnist, cifar10, cifar100, boston_housing, fashion_mnist
-from keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.datasets import mnist, cifar10, cifar100, boston_housing, fashion_mnist
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+import imdb_model
+
+from imdb_model import get_embedding, grad_x_input
+
+
 
 # -------------------------------------------------
 # DATA UTILS
 # -------------------------------------------------
 
+import random
 
 def __unison_shuffled_copies(a, b):
     assert len(a) == len(b)
     p = np.random.permutation(len(a))
     return a[p], b[p]
+
+def random_sample(X: np.ndarray, y: np.ndarray, proba_zero: float, n: int):
+    if len(y.shape) == 1:
+        idx_0 = np.where(y == 0)[0]
+        idx_1 = np.where(y == 1)[0]
+    else:
+        idx_0 = np.where(y[:, 0] == 1)[0]
+        idx_1 = np.where(y[:, 1] == 1)[0]
+    n_0, n_1 = int(n * proba_zero), int(n * (1 - proba_zero))
+    idx_0_out = np.random.choice(idx_0, n_0, replace=False)
+    idx_1_out = np.random.choice(idx_1, n_1, replace=False)
+    X_out = np.concatenate([X[idx_0_out], X[idx_1_out]])
+    y_out = np.concatenate([y[idx_0_out], y[idx_1_out]])
+    return X_out, y_out
+
+def padding_last(x: np.ndarray, seq_len: int) -> np.ndarray:
+    try:  # try not to replace padding token
+        last_token = np.where(x == 0)[0][0]
+    except:  # no padding
+        last_token = seq_len - 1
+    return 1, last_token
+
+
+def padding_first(x: np.ndarray, seq_len: int) -> np.ndarray:
+    try:  # try not to replace padding token
+        first_token = np.where(x == 0)[0][-1] + 2
+    except:  # no padding
+        first_token = 0
+    return first_token, seq_len - 1
+
+def inject_word(token: int, X: np.ndarray, perc_chg: float, padding: str = 'last'):
+    seq_len = X.shape[1]
+    n_chg = int(perc_chg * .01 * seq_len)
+    X_cp = X.copy()
+    for _ in range(X.shape[0]):
+
+        if padding == 'last':
+            first_token, last_token = padding_last(X_cp[_, :], seq_len)
+        else:
+            first_token, last_token = padding_first(X_cp[_, :], seq_len)
+
+        if last_token <= n_chg:
+            choice_len = seq_len
+        else:
+            choice_len = last_token
+
+        idx = np.random.choice(np.arange(first_token, choice_len), n_chg, replace=False)
+
+        X_cp[_, idx] = token
+    return X_cp
+
 
 
 def normalize_datapoints(x, factor):
@@ -44,13 +103,21 @@ def random_shuffle_and_split(x_train, y_train, x_test, y_test, split_index):
     return (x_train, y_train), (x_test, y_test)
 
 
+def resize(mnist):
+    train_data = []
+    for img in mnist:
+        resized_img = cv2.resize(img, (32, 32))
+        train_data.append(resized_img)
+    return np.array(train_data)
+
+
 def import_dataset(dataset, shuffle=False):
     x_train, y_train, x_test, y_test = None, None, None, None
     external_dataset_path = './datasets/'
     nb_classes = 10
     if dataset == 'boston':
         (x_train, y_train), (x_test, y_test) = boston_housing.load_data()
-    elif dataset == 'mnist':
+    elif dataset == 'mnist' or dataset == 'mnist_gradxinput':
         (x_train, y_train), (x_test, y_test) = mnist.load_data()
         x_train = x_train.reshape(len(x_train), 28, 28, 1)
         x_test = x_test.reshape(len(x_test), 28, 28, 1)
@@ -151,6 +218,39 @@ def import_dataset(dataset, shuffle=False):
             y_test[i:i+test_samples_per_cat] = y[j+train_samples_per_cat:j+samples_per_cat]
             i = i + test_samples_per_cat
             j = j + samples_per_cat
+    elif dataset == 'imdb':
+        (x_train, y_train), (x_test, y_test), _ = imdb_model.get_dataset()
+
+        mod_path = 'imdb_lstm'
+        model = tf.keras.models.load_model(mod_path)
+
+        x_train = np.array(get_embedding(model, x_train, y_train))
+        x_test = np.array(get_embedding(model, x_test[:1000], y_test))
+        print(x_train.shape)
+
+        y_test = y_test[:1000]
+        print('n_pert: {}'.format(x_test.shape))
+        nb_classes = 2
+    elif dataset == 'imdb_perturbed':
+        words = ['fantastic', 'good', 'bad', 'horrible']
+
+        (x_train, y_train), (x_test, y_test), (w2i, i2w) = imdb_model.get_dataset()
+
+        np.random.shuffle(x_test)
+        tokens = [w2i[w] for w in words]
+
+        prob = 0.05
+        rand_words = np.random.random_sample(x_test.shape) > 1 - prob
+
+        x_test[rand_words] = np.random.choice(tokens, x_test.shape)[rand_words]
+
+        mod_path = 'imdb_lstm'
+
+        model = tf.keras.models.load_model(mod_path)
+        x_test = np.array(get_embedding(model, x_test[:1000], y_test[:1000]))
+
+        print('pert: {}'.format(x_test.shape))
+        nb_classes = 2
 
     if shuffle:
         (x_train, y_train), (x_test, y_test) = random_shuffle_and_split(x_train, y_train, x_test, y_test, len(x_train))
@@ -167,17 +267,18 @@ def import_dataset(dataset, shuffle=False):
     y_train = y_train_spl[0]
     y_val = y_train_spl[1]
 
-    orig_dims = x_train.shape[1:]
+    orig_dims = x_test.shape[1:]
+    print(orig_dims)
+    if len(orig_dims) < 3:
+        orig_dims = (16,16,100)
 
     # Reshape to matrix form
     x_train = x_train.reshape((len(x_train), np.prod(x_train.shape[1:])))
     x_val = x_val.reshape((len(x_val), np.prod(x_val.shape[1:])))
     x_test = x_test.reshape((len(x_test), np.prod(x_test.shape[1:])))
-    y_train = y_train.reshape(len(y_train))
-    y_val = y_val.reshape(len(y_val))
-    y_test = y_test.reshape(len(y_test))
-    
-    print(orig_dims)
+    #y_train = y_train.reshape(len(y_train))
+    #y_val = y_val.reshape(len(y_val))
+    #y_test = y_test.reshape(len(y_test))
 
     return (x_train, y_train), (x_val, y_val), (x_test, y_test), orig_dims, nb_classes
 
@@ -261,9 +362,29 @@ def adversarial_samples(dataset):
     x_test, y_test = None, None
     external_dataset_path = './datasets/'
     if dataset == 'mnist':
-        x_test = np.load(external_dataset_path + 'mnist_X_adversarial.npy')
-        y_test = np.load(external_dataset_path + 'mnist_y_adversarial.npy')
+        x_test = np.load(external_dataset_path + 'mnist_X_adversarial.npy', allow_pickle=True,fix_imports=True,encoding='latin1')
+        y_test = np.load(external_dataset_path + 'mnist_y_adversarial.npy', allow_pickle=True, fix_imports=True,encoding='latin1')
     elif dataset == 'cifar10':
-        x_test = np.load(external_dataset_path + 'cifar10_X_adversarial.npy')
-        y_test = np.load(external_dataset_path + 'cifar10_y_adversarial.npy')
+        x_test = np.load(external_dataset_path + 'cifar10_X_adversarial.npy', allow_pickle=True,fix_imports=True,encoding='latin1')
+        y_test = np.load(external_dataset_path + 'cifar10_y_adversarial.npy', allow_pickle=True,fix_imports=True,encoding='latin1')
     return x_test, y_test
+
+def clean_str(string, TREC=False):
+    """
+    Tokenization/string cleaning for all datasets except for SST.
+    Every dataset is lower cased except for TREC
+    """
+    string = re.sub(r"[^A-Za-z0-9(),!?\'\`]", " ", string)
+    string = re.sub(r"\'s", " \'s", string)
+    string = re.sub(r"\'ve", " \'ve", string)
+    string = re.sub(r"n\'t", " n\'t", string)
+    string = re.sub(r"\'re", " \'re", string)
+    string = re.sub(r"\'d", " \'d", string)
+    string = re.sub(r"\'ll", " \'ll", string)
+    string = re.sub(r",", " , ", string)
+    string = re.sub(r"!", " ! ", string)
+    string = re.sub(r"\(", " \( ", string)
+    string = re.sub(r"\)", " \) ", string)
+    string = re.sub(r"\?", " \? ", string)
+    string = re.sub(r"\s{2,}", " ", string)
+    return string.strip() if TREC else string.strip().lower()

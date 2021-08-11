@@ -3,6 +3,7 @@
 # -------------------------------------------------
 
 from data_utils import *
+import numpy as np
 
 # -------------------------------------------------
 # SHIFT APPLICATOR
@@ -10,8 +11,8 @@ from data_utils import *
 
 
 def apply_shift(X_te_orig, y_te_orig, shift, orig_dims, datset):
-	X_te_1 = None
-	y_te_1 = None
+	X_te_1 = X_te_orig.copy()
+	y_te_1 = y_te_orig.copy()
 	
 	if shift == 'rand':
 		print('Randomized')
@@ -29,8 +30,14 @@ def apply_shift(X_te_orig, y_te_orig, shift, orig_dims, datset):
 		y_te_1 = y_te_orig.copy()
 	elif shift == 'small_gn_shift_1.0':
 		print('Small GN Shift')
-		normalization = 255.0
+		normalization = np.std(X_te_orig)
 		X_te_1, _ = gaussian_noise_subset(X_te_orig, 1.0, normalization=normalization, delta_total=1.0)
+	elif shift == 'tiny_gn_shift_1.0':
+		print('Tiny GN Shift')
+		noise_amt = 0.5
+		normalization = np.std(X_te_orig)
+		noise = np.random.normal(0, noise_amt * normalization, X_te_orig.shape).astype(np.double)
+		X_te_1 = (X_te_orig + noise).astype(np.double)
 		y_te_1 = y_te_orig.copy()
 	elif shift == 'large_gn_shift_0.5':
 		print('Large GN shift')
@@ -64,6 +71,7 @@ def apply_shift(X_te_orig, y_te_orig, shift, orig_dims, datset):
 		y_te_1 = y_te_orig.copy()
 	elif shift == 'adversarial_shift_1.0':
 		print('Large adversarial shift')
+		datset = datset[:5]
 		adv_samples, true_labels = adversarial_samples(datset)
 		X_te_1, y_te_1, _ = data_subset(X_te_orig, y_te_orig, adv_samples, true_labels, delta=1.0)
 	elif shift == 'adversarial_shift_0.5':
@@ -146,5 +154,10 @@ def apply_shift(X_te_orig, y_te_orig, shift, orig_dims, datset):
 		print('Only zero shift + Medium image shift')
 		X_te_1, y_te_1 = only_one_shift(X_te_orig, y_te_orig, 0)
 		X_te_1, _ = image_generator(X_te_1, orig_dims, 40, 0.2, 0.2, 0.2, 0.2, True, False, delta=1.0)
-	
+	elif shift == 'constant_shift':
+		X_te_1, y_te_1 = (X_te_orig - 1.0, y_te_orig - 1.0)
+	elif shift == 'bg_shift':
+		X_te_1 = X_te_orig.copy()
+		X_te_1[X_te_orig < 0.1] = 0.1#np.random.sample(X_te_orig.shape)[X_te_orig < 0.1]
+		y_te_1 = y_te_orig.copy()
 	return (X_te_1, y_te_1)

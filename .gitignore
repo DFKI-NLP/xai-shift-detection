@@ -10,6 +10,6 @@ __pycache__
 .vscode
 
 # Project
-paper_results
+paper_results_orig
 adv_samples
 

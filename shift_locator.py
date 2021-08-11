@@ -1,17 +1,16 @@
 # -------------------------------------------------
 # IMPORTS
 # -------------------------------------------------
-
+import tensorflow as tf
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.svm import OneClassSVM
-from keras.utils import to_categorical
-from keras.callbacks import ReduceLROnPlateau, EarlyStopping
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
 
 from shift_tester import *
 
-import keras
 import keras_resnet
-from keras import optimizers
+from tensorflow.keras import optimizers
 
 
 class DifferenceClassifier(Enum):
@@ -144,7 +143,7 @@ class ShiftLocator:
         nb_classes = 2
         epochs = 200
         
-        model = keras_resnet.models.ResNet18(keras.layers.Input(self.orig_dims), classes=nb_classes)
+        model = keras_resnet.models.ResNet18(tf.keras.layers.Input(self.orig_dims), classes=nb_classes)
         model.compile(loss='categorical_crossentropy',
                       optimizer=optimizers.SGD(lr=0.001, decay=1e-6, momentum=0.9),
                       metrics=['accuracy'])

@@ -3,16 +3,17 @@
 # -------------------------------------------------
 
 import numpy as np
+
+import tensorflow as tf
+tf.enable_eager_execution()
+
 from tensorflow import set_random_seed
 seed = 1
 np.random.seed(seed)
 set_random_seed(seed)
 
-import keras
 import tempfile
-import keras.models
 
-from keras import backend as K 
 from shift_detector import *
 from shift_locator import *
 from shift_applicator import *
@@ -24,6 +25,8 @@ import sys
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib import rc
+
+from imdb_model import grad_x_input_autoencoder
 
 # -------------------------------------------------
 # PLOTTING HELPERS
@@ -80,7 +83,7 @@ def make_keras_picklable():
     def __getstate__(self):
         model_str = ""
         with tempfile.NamedTemporaryFile(suffix='.hdf5', delete=True) as fd:
-            keras.models.save_model(self, fd.name, overwrite=True)
+            tf.keras.models.save_model(self, fd.name, overwrite=True)
             model_str = fd.read()
         d = { 'model_str': model_str }
         return d
@@ -89,11 +92,11 @@ def make_keras_picklable():
         with tempfile.NamedTemporaryFile(suffix='.hdf5', delete=True) as fd:
             fd.write(state['model_str'])
             fd.flush()
-            model = keras.models.load_model(fd.name)
+            model = tf.keras.models.load_model(fd.name)
         self.__dict__ = model.__dict__
 
 
-    cls = keras.models.Model
+    cls = tf.keras.models.Model
     cls.__getstate__ = __getstate__
     cls.__setstate__ = __setstate__
 
@@ -111,13 +114,14 @@ colors = ['#2196f3', '#f44336', '#9c27b0', '#64dd17', '#009688', '#ff9800', '#79
 # CONFIG
 # -------------------------------------------------
 
-make_keras_picklable()
-
 datset = sys.argv[1]
 test_type = sys.argv[3]
+path = sys.argv[4]
+path = './' + path
+if path is None:
+    path = '/paper_results'
 
 # Define results path and create directory.
-path = './paper_results/'
 path += test_type + '/'
 path += datset + '_'
 path += sys.argv[2] + '/'
@@ -147,7 +151,7 @@ else:
 difference_samples = 20
 
 # Number of random runs to average results over.
-random_runs = 5
+random_runs = 30
 
 # Significance level.
 sign_level = 0.05
@@ -204,8 +208,15 @@ elif sys.argv[2] == 'only_zero_shift+medium_img_shift':
               'only_zero_shift+medium_img_shift_0.5',
               'only_zero_shift+medium_img_shift_1.0']
     samples = [10, 20, 50, 100, 200, 500, 1000]
+elif sys.argv[2] == 'constant_shift':
+    shifts = ['constant_shift']
+    samples = [10, 20, 50, 100, 200, 500, 1000]
+
+elif sys.argv[2] == 'bg_shift':
+    shifts = ['bg_shift']
+    samples = [10, 20, 50, 100, 200, 500, 1000]
 else:
-    shifts = []
+    shifts = [sys.argv[2]]
     
 if datset == 'coil100' and test_type == 'univ':
     samples = [10, 20, 50, 100, 200, 500, 1000, 2400]
@@ -256,18 +267,25 @@ for shift_idx, shift in enumerate(shifts):
         X_tr_orig = normalize_datapoints(X_tr_orig, 255.)
         X_te_orig = normalize_datapoints(X_te_orig, 255.)
         X_val_orig = normalize_datapoints(X_val_orig, 255.)
-
         # Apply shift.
         if shift == 'orig':
-            print('Original')
-            (X_tr_orig, y_tr_orig), (X_val_orig, y_val_orig), (X_te_orig, y_te_orig), orig_dims, nb_classes = import_dataset(datset)
-            X_tr_orig = normalize_datapoints(X_tr_orig, 255.)
-            X_te_orig = normalize_datapoints(X_te_orig, 255.)
-            X_val_orig = normalize_datapoints(X_val_orig, 255.)
             X_te_1 = X_te_orig.copy()
             y_te_1 = y_te_orig.copy()
         else:
+            print(X_te_orig.shape)
             (X_te_1, y_te_1) = apply_shift(X_te_orig, y_te_orig, shift, orig_dims, datset)
+
+        # convert to explanations
+
+        if datset == 'mnist_gradxinput':
+            #mod_path = './saved_models/mnist_autoencoder_model.h5'
+            mod_path = './saved_models/mnist_standard_class_model.h5'
+
+            model = tf.keras.models.load_model(mod_path)
+
+            X_tr_orig = grad_x_input(model, X_tr_orig)
+            X_te_1 = grad_x_input(model, X_te_1)
+            X_val_orig = grad_x_input(model, X_val_orig)
 
         X_te_2 , y_te_2 = random_shuffle(X_te_1, y_te_1)
 
@@ -328,6 +346,9 @@ for shift_idx, shift in enumerate(shifts):
                 rand_run_p_vals[si,:,rand_run] = np.append(ind_od_p_vals.flatten(), p_val)
 
                 if datset == 'mnist':
+                    samp_shape = (28,28)
+                    cmap = 'gray'
+                elif datset == 'mnist_gradxinput':
                     samp_shape = (28,28)
                     cmap = 'gray'
                 elif datset == 'cifar10' or datset == 'cifar10_1' or datset == 'coil100' or datset == 'svhn':
@@ -425,9 +446,9 @@ for shift_idx, shift in enumerate(shifts):
         plt.clf()
 
         np.savetxt("%s/dr_method_p_vals.csv" % rand_run_path, rand_run_p_vals[:,:,rand_run], delimiter=",")
-
-        np.random.seed(seed)
-        set_random_seed(seed)
+        s = 1
+        np.random.seed(s)
+        set_random_seed(s)
 
     mean_p_vals = np.mean(rand_run_p_vals, axis=2)
     std_p_vals = np.std(rand_run_p_vals, axis=2)
